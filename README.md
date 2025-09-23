@@ -1,4 +1,4 @@
----
+<img width="1321" height="429" alt="diagram-export-9-23-2025-11_41_00-PM" src="https://github.com/user-attachments/assets/e49a2172-9be3-48e3-94e0-2a552d5a9452" />
 
 # CI/CD Pipeline for Flask Application Deployment on AWS EC2
 
@@ -19,16 +19,26 @@ This CI/CD pipeline automates the deployment of a Flask web application to an AW
 
 ### Repository Structure
 ```
-├── app.py                  # Flask application
-├── requirements.txt        # Python dependencies
-├── Dockerfile             # Docker image configuration
-├── terraform/             # Terraform configurations
+.
+├── .github/
+│   └── workflows/
+│       ├── deploy.yml        # Terraform deploy pipeline
+│       └── run-container.yml # Docker build/run pipeline
+├── templates/                # Optional Terraform templates/modules
+├── terraform/                # Terraform infrastructure configs
+│   ├── alb.tf
+│   ├── backend.tf
+│   ├── dynamodb.tf
+│   ├── ec2.tf
 │   ├── main.tf
+│   ├── output.tf
+│   ├── rds.tf
 │   ├── variables.tf
-│   ├── outputs.tf
-├── .github/workflows/     # GitHub Actions workflows
-│   ├── provision-and-build.yml
-│   ├── deploy.yml
+├── Dockerfile                # Flask app container definition
+├── app.py                    # Flask application code
+├── requirements.txt          # Python dependencies
+├── README.md                 # Documentation
+
 ```
 
 ## Prerequisites
@@ -41,105 +51,32 @@ This CI/CD pipeline automates the deployment of a Flask web application to an AW
 
 ### Example Flask Dockerfile
 ```dockerfile
-FROM python:3.9-slim
+# Use official Python image
+FROM python:3.10-slim
 
+# Set working directory
 WORKDIR /app
 
-COPY requirements.txt .
+# Install system dependencies
+RUN apt-get update && apt-get install -y gcc libpq-dev
+
+# Copy files
+COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
+# Expose Flask port
+EXPOSE 5000
 
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
-```
-
-### Example Terraform Configuration
-In `terraform/main.tf`:
-```hcl
-provider "aws" {
-  region = var.aws_region
-}
-
-resource "aws_ecr_repository" "flask_repo" {
-  name = var.ecr_repository_name
-}
-
-resource "aws_instance" "flask_ec2" {
-  ami           = var.ec2_ami
-  instance_type = "t2.micro"
-  key_name      = var.ec2_key_name
-  security_groups = [aws_security_group.flask_sg.name]
-
-  tags = {
-    Name = "FlaskAppEC2"
-  }
-}
-
-resource "aws_security_group" "flask_sg" {
-  name = "flask-sg"
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-resource "aws_db_instance" "flask_db" {
-  allocated_storage    = 20
-  storage_type         = "gp2"
-  engine               = "postgres"
-  engine_version       = "13"
-  instance_class       = "db.t3.micro"
-  db_name              = var.db_name
-  username             = var.db_username
-  password             = var.db_password
-  skip_final_snapshot  = true
-}
-
-output "ec2_public_ip" {
-  value = aws_instance.flask_ec2.public_ip
-}
-
-output "db_endpoint" {
-  value = aws_db_instance.flask_db.endpoint
-}
-
-output "ecr_repo_url" {
-  value = aws_ecr_repository.flask_repo.repository_url
-}
-```
-
-In `terraform/variables.tf`:
-```hcl
-variable "aws_region" { default = "us-east-1" }
-variable "ecr_repository_name" { default = "flask-app-repo" }
-variable "ec2_ami" { default = "ami-0abcdef1234567890" } # Replace with valid AMI
-variable "ec2_key_name" { default = "flask-ec2-key" }
-variable "db_name" { default = "flaskdb" }
-variable "db_username" { default = "dbuser" }
-variable "db_password" { sensitive = true }
+# Run app
+CMD ["python", "app.py"]
 ```
 
 ## Workflow Triggers and Job Dependencies
 
 ### Workflow Triggers
-1. **Provision and Build Workflow** (`.github/workflows/provision-and-build.yml`):
+1. **Provision and Build Workflow** (`.github/workflows/deploy.yml`):
    - Triggered on push to `main`:
      ```yaml
      on:
@@ -153,10 +90,10 @@ variable "db_password" { sensitive = true }
    - Triggered on successful completion of the "Provision and Build" workflow:
      ```yaml
      on:
-       workflow_run:
-         workflows: ["Provision and Build"]
-         types:
-           - completed
+  workflow_run:
+    workflows: [Deploy Flask App with Terraform]
+    types:
+      - completed
      ```
    - Ensures deployment only proceeds if provisioning succeeds.
 
@@ -208,34 +145,8 @@ Terraform outputs (`terraform/outputs.tf`) provide dynamic values post-provision
 - `ecr_repo_url`: ECR repository URL (e.g., `123456789012.dkr.ecr.us-east-1.amazonaws.com/flask-app-repo`). Used in Workflow 1 to push image and Workflow 2 to pull it.
 
 ### Workflow 1: Capturing and Uploading Outputs
-```yaml
-- name: Get Terraform Outputs
-  id: tf-outputs
-  run: |
-    echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
-    echo "DB_ENDPOINT=$(terraform output -raw db_endpoint)" >> $GITHUB_ENV
-    echo "ECR_REPO_URL=$(terraform output -raw ecr_repo_url)" >> $GITHUB_ENV
-    echo "EC2_IP=$(terraform output -raw ec2_public_ip)" > tf-outputs.env
-    echo "DB_ENDPOINT=$(terraform output -raw db_endpoint)" >> tf-outputs.env
-    echo "ECR_REPO_URL=$(terraform output -raw ecr_repo_url)" >> tf-outputs.env
-- name: Upload Terraform Outputs
-  uses: actions/upload-artifact@v3
-  with:
-    name: terraform-outputs
-    path: tf-outputs.env
-```
 
 ### Workflow 2: Consuming Outputs
-```yaml
-- name: Download Terraform Outputs
-  uses: actions/download-artifact@v3
-  with:
-    name: terraform-outputs
-- name: Load Outputs to Environment
-  run: cat tf-outputs.env >> $GITHUB_ENV
-```
-
-These outputs are used for SSH (`${{ env.EC2_IP }}`), Docker pull (`${{ env.ECR_REPO_URL }}`), and DB connectivity (`${{ env.DB_ENDPOINT }}`).
 
 ## Security Considerations
 
@@ -264,32 +175,6 @@ These outputs are used for SSH (`${{ env.EC2_IP }}`), Docker pull (`${{ env.ECR_
 - **Logging**: Enable AWS CloudTrail to monitor API calls and detect unauthorized access.
 - **Validation**: Sanitize inputs in SSH scripts to prevent injection attacks.
 - **Artifact Security**: Encrypt sensitive artifacts if needed (GitHub supports encrypted artifacts).
-
-## Environment Variable Usage in Container Runtime
-
-The Flask container requires environment variables for database connectivity and runtime configuration. These are set during `docker run` in the deployment workflow:
-
-```yaml
-- name: Deploy via SSH
-  uses: appleboy/ssh-action@v0.1.10
-  with:
-    host: ${{ env.EC2_IP }}
-    username: ubuntu
-    key: ${{ secrets.SSH_PRIVATE_KEY }}
-    script: |
-      sudo apt update && sudo apt install -y docker.io
-      sudo systemctl start docker
-      aws ecr get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin ${{ env.ECR_REPO_URL }}
-      sudo docker pull ${{ env.ECR_REPO_URL }}:latest
-      sudo docker stop flask-app || true
-      sudo docker rm flask-app || true
-      sudo docker run -d --name flask-app -p 80:5000 \
-        -e DB_HOST=${{ env.DB_ENDPOINT }} \
-        -e DB_USER=${{ secrets.DB_USERNAME }} \
-        -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
-        -e DB_NAME=flaskdb \
-        ${{ env.ECR_REPO_URL }}:latest
-```
 
 ### Environment Variables
 - `DB_HOST`: RDS endpoint from Terraform output (`db_endpoint`).
@@ -351,125 +236,148 @@ This decouples configuration from code, enhancing security and flexibility.
 
 ## Example Workflows
 
-### Provision and Build Workflow (`.github/workflows/provision-and-build.yml`)
+### Provision and Build Workflow (`.github/workflows/deploy.yml`)
 ```yaml
-name: Provision and Build
+name: Deploy Flask App with Terraform
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+    
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+env:
+  AWS_REGION: ca-central-1
+  ECR_REPOSITORY: greeting-app
+  IMAGE_TAG: latest
 
 jobs:
-  setup-terraform:
+  deploy:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-      - run: terraform init
-        working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  terraform-destroy-apply:
-    needs: setup-terraform
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: hashicorp/setup-terraform@v2
-      - run: terraform init
-        working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      - run: terraform destroy -auto-approve  # Optional
-        working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      - run: terraform apply -auto-approve
-        working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-  build-push-docker:
-    needs: terraform-destroy-apply
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - run: |
-          echo "ECR_REPO_URL=$(terraform output -raw ecr_repo_url)" >> $GITHUB_ENV
-        working-directory: terraform
-      - uses: docker/login-action@v2
-        with:
-          registry: ${{ env.ECR_REPO_URL }}
-          username: AWS
-          password: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      - run: docker build -t ${{ env.ECR_REPO_URL }}:latest .
-      - run: docker push ${{ env.ECR_REPO_URL }}:latest
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-  upload-artifacts:
-    needs: terraform-destroy-apply
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - run: |
-          echo "EC2_IP=$(terraform output -raw ec2_public_ip)" > tf-outputs.env
-          echo "DB_ENDPOINT=$(terraform output -raw db_endpoint)" >> tf-outputs.env
-          echo "ECR_REPO_URL=$(terraform output -raw ecr_repo_url)" >> tf-outputs.env
-        working-directory: terraform
-      - uses: actions/upload-artifact@v3
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          name: terraform-outputs
-          path: tf-outputs.env
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ca-central-1
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${AWS_REGION} |sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com  
+
+      - name: Terraform Apply with DB creds
+        env:
+          TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        run: |
+          cd terraform
+          terraform init -reconfigure
+          terraform destroy -auto-approve
+          #terraform apply -auto-approve
+          terraform output -json > terraform_outputs.json
+
+      - name: Build, Tag, and Push Docker image
+        run: |
+            IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+            aws ecr get-login-password --region ca-central-1 | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com     
+            
+            sudo docker build -t python-app .
+            docker tag python-app:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/greeting-app:latest
+
+            aws ecr get-login-password --region ca-central-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/greeting-app:latest
+
+
+      - name: Upload Terraform Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy # The name of the artifact
+          path: terraform/terraform_outputs.json
 ```
 
-### Deployment Workflow (`.github/workflows/deploy.yml`)
+### Deployment Workflow (`.github/workflows/run-container.yml`)
 ```yaml
-name: Deploy
+name: Deploy Flask App on EC2
 
 on:
   workflow_run:
-    workflows: ["Provision and Build"]
+    workflows: [Deploy Flask App with Terraform]
     types:
       - completed
 
-jobs:
-  download-artifacts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v3
-        with:
-          name: terraform-outputs
-      - run: cat tf-outputs.env >> $GITHUB_ENV
+permissions:
+  contents: read
+  actions: read
 
-  deploy-to-ec2:
-    needs: download-artifacts
+jobs:
+  run-docker:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v0.1.10
+      - name: Download Terraform Outputs
+        uses: actions/download-artifact@v4
         with:
-          host: ${{ env.EC2_IP }}
-          username: ubuntu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo apt update && sudo apt install -y docker.io
+          name: deploy
+          path: ./outputs
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Parse Terraform Outputs
+        id: vars
+        run: |
+          DB_HOST=$(jq -r '.db_endpoint.value' ./outputs/terraform_outputs.json)
+          EC2_IP=$(jq -r '.ec2_public_ip.value' ./outputs/terraform_outputs.json)
+          ECR_REPO=$(jq -r '.ecr_repo_url.value' ./outputs/terraform_outputs.json)
+
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+          echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
+          echo "ECR_REPO=$ECR_REPO" >> $GITHUB_ENV
+
+      - name: Setup SSH Key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > Python.pem
+          chmod 600 Python.pem
+
+      - name: SSH into EC2 and run Docker
+        run: |
+          ssh -o StrictHostKeyChecking=no -i Python.pem ec2-user@${{ env.EC2_IP }} << EOF
+            # Install Docker if not present
+            sudo yum update -y
+            sudo yum install -y docker
+            sudo systemctl enable docker
             sudo systemctl start docker
-            aws ecr get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin ${{ env.ECR_REPO_URL }}
-            sudo docker pull ${{ env.ECR_REPO_URL }}:latest
-            sudo docker stop flask-app || true
-            sudo docker rm flask-app || true
-            sudo docker run -d --name flask-app -p 80:5000 \
-              -e DB_HOST=${{ env.DB_ENDPOINT }} \
-              -e DB_USER=${{ secrets.DB_USERNAME }} \
-              -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
-              -e DB_NAME=flaskdb \
-              ${{ env.ECR_REPO_URL }}:latest
+            sudo usermod -aG docker ec2-user
+
+            # ECR login
+            aws ecr get-login-password --region ca-central-1 | sudo docker login --username AWS --password-stdin ${ECR_REPO}
+
+            # Pull and run the latest image
+            sudo docker pull ${ECR_REPO}:latest
+            sudo docker rm -f flask-app || true
+
+            sudo docker run -d --name flask-app -p 5001:5000 \
+              -e DB_HOST=${DB_HOST} \
+              -e DB_NAME=greetings_db \
+              -e DB_USER=${DB_USERNAME} \
+              -e DB_PASS=${DB_PASSWORD} \
+              ${ECR_REPO}:latest
+          EOF
+        env:
+          DB_HOST: ${{ env.DB_HOST }}
+          EC2_IP: ${{ env.EC2_IP }}
+          ECR_REPO: ${{ env.ECR_REPO }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 ```
 
 ## Troubleshooting
