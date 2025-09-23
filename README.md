@@ -89,11 +89,11 @@ CMD ["python", "app.py"]
 2. **Deployment Workflow** (`.github/workflows/deploy.yml`):
    - Triggered on successful completion of the "Provision and Build" workflow:
      ```yaml
-     on:
-  workflow_run:
-    workflows: [Deploy Flask App with Terraform]
-    types:
-      - completed
+           on:
+        workflow_run:
+          workflows: [Deploy Flask App with Terraform]
+          types:
+            - completed
      ```
    - Ensures deployment only proceeds if provisioning succeeds.
 
