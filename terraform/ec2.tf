@@ -34,7 +34,7 @@ resource "aws_instance" "flask_ec2" {
   ami           = "ami-081b0a6eac00b4f53" # Ubuntu
   instance_type = "t2.micro"
   subnet_id     = module.vpc.public_subnets[0]
-  key_name      = "Python"
+  key_name      = "fbkey"
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
   associate_public_ip_address = true
