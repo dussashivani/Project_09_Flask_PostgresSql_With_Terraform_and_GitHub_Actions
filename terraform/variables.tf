@@ -20,6 +20,3 @@ variable "aws_account_id" {
   # Set this via terraform.tfvars or environment variable (e.g., TF_VAR_aws_account_id)
 }
 
-output "db_address" {
-  value = aws_db_instance.postgres.address
-}
