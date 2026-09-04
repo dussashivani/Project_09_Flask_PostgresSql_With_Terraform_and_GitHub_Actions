@@ -2,66 +2,137 @@ name: Deploy Flask App with Terraform
 
 on:
   push:
-    branches: [ main ]
-    
+    branches:
+      - main
+
 permissions:
   contents: read
   actions: write
-  id-token: write
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: greeting-app
   IMAGE_TAG: latest
 
 jobs:
+
   deploy:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
+
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
 
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region ${AWS_REGION} |sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com  
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Apply with DB creds
+
+      - name: Terraform Init
+        working-directory: terraform
+
         env:
           TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+
         run: |
-          cd terraform
           terraform init -reconfigure
-          terraform destroy -auto-approve
-          #terraform apply -auto-approve
+
+
+      - name: Terraform Validate
+        working-directory: terraform
+
+        run: |
+          terraform validate
+
+
+      - name: Terraform Plan
+        working-directory: terraform
+
+        env:
+          TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+
+        run: |
+          terraform plan
+
+
+      - name: Terraform Apply
+        working-directory: terraform
+
+        env:
+          TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+
+        run: |
+          terraform apply -auto-approve
+
+
+      - name: Save Terraform Outputs
+        working-directory: terraform
+
+        run: |
           terraform output -json > terraform_outputs.json
 
-      - name: Build, Tag, and Push Docker image
-        run: |
-            IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
-            aws ecr get-login-password --region ca-central-1 | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com     
-            
-            sudo docker build -t python-app .
-            docker tag python-app:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/greeting-app:latest
 
-            aws ecr get-login-password --region ca-central-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com
-            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/greeting-app:latest
+      - name: Login to Amazon ECR
+
+        run: |
+
+          aws ecr get-login-password \
+            --region $AWS_REGION \
+          | docker login \
+            --username AWS \
+            --password-stdin \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+
+      - name: Build Docker Image
+
+        run: |
+
+          docker build \
+            -t python-app:${IMAGE_TAG} .
+
+
+      - name: Tag Docker Image
+
+        run: |
+
+          docker tag \
+            python-app:${IMAGE_TAG} \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+
+
+      - name: Push Docker Image to ECR
+
+        run: |
+
+          docker push \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
 
 
       - name: Upload Terraform Outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy # The name of the artifact
-          path: terraform/terraform_outputs.json
 
-          
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: deploy
+
+          path: terraform/terraform_outputs.json
