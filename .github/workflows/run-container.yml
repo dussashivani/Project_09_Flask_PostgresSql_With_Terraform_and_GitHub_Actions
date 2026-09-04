@@ -1,8 +1,11 @@
-name: Deploy Flask App on EC2
+name: Run Flask Container on EC2
 
 on:
   workflow_run:
-    workflows: [Deploy Flask App with Terraform]
+
+    workflows:
+      - Deploy Flask App with Terraform
+
     types:
       - completed
 
@@ -11,61 +14,115 @@ permissions:
   actions: read
 
 jobs:
+
   run-docker:
+
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Download Terraform Outputs
+
         uses: actions/download-artifact@v4
+
         with:
           name: deploy
+
           path: ./outputs
+
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
           run-id: ${{ github.event.workflow_run.id }}
 
+
       - name: Parse Terraform Outputs
-        id: vars
+
         run: |
+
           DB_HOST=$(jq -r '.db_endpoint.value' ./outputs/terraform_outputs.json)
+
           EC2_IP=$(jq -r '.ec2_public_ip.value' ./outputs/terraform_outputs.json)
+
           ECR_REPO=$(jq -r '.ecr_repo_url.value' ./outputs/terraform_outputs.json)
 
-          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
-          echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
-          echo "ECR_REPO=$ECR_REPO" >> $GITHUB_ENV
+          ALB_DNS=$(jq -r '.alb_dns.value' ./outputs/terraform_outputs.json)
+
+          echo "DB_HOST=$DB_HOST" >> "$GITHUB_ENV"
+
+          echo "EC2_IP=$EC2_IP" >> "$GITHUB_ENV"
+
+          echo "ECR_REPO=$ECR_REPO" >> "$GITHUB_ENV"
+
+          echo "ALB_DNS=$ALB_DNS" >> "$GITHUB_ENV"
+
 
       - name: Setup SSH Key
-        run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > Python.pem
-          chmod 600 Python.pem
 
-      - name: SSH into EC2 and run Docker
         run: |
-          ssh -o StrictHostKeyChecking=no -i Python.pem ec2-user@${{ env.EC2_IP }} << EOF
-            # Install Docker if not present
-            sudo yum update -y
-            sudo yum install -y docker
+
+          echo "${{ secrets.EC2_SSH_KEY }}" > fbkey.pem
+
+          chmod 600 fbkey.pem
+
+
+      - name: Deploy Docker Container to EC2
+
+        env:
+
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -i fbkey.pem \
+            ubuntu@${EC2_IP} << EOF
+
+            set -e
+
+            echo "Starting Docker..."
+
             sudo systemctl enable docker
+
             sudo systemctl start docker
-            sudo usermod -aG docker ec2-user
 
-            # ECR login
-            aws ecr get-login-password --region ca-central-1 | sudo docker login --username AWS --password-stdin ${ECR_REPO}
+            echo "Checking AWS CLI..."
 
-            # Pull and run the latest image
+            aws --version
+
+            echo "Logging in to ECR..."
+
+            aws ecr get-login-password \
+              --region us-east-1 \
+              | sudo docker login \
+              --username AWS \
+              --password-stdin ${ECR_REPO}
+
+            echo "Pulling Flask image..."
+
             sudo docker pull ${ECR_REPO}:latest
+
+            echo "Removing old Flask container..."
+
             sudo docker rm -f flask-app || true
 
-            sudo docker run -d --name flask-app -p 5001:5000 \
-              -e DB_HOST=${DB_HOST} \
-              -e DB_NAME=greetings_db \
-              -e DB_USER=${DB_USERNAME} \
-              -e DB_PASS=${DB_PASSWORD} \
+            echo "Starting Flask application..."
+
+            sudo docker run -d \
+              --name flask-app \
+              -p 5001:5000 \
+              -e DB_HOST="${DB_HOST}" \
+              -e DB_NAME="greetings_db" \
+              -e DB_USER="${DB_USERNAME}" \
+              -e DB_PASS="${DB_PASSWORD}" \
               ${ECR_REPO}:latest
+
+            echo "Deployment completed."
+
+            sudo docker ps
+
           EOF
-        env:
-          DB_HOST: ${{ env.DB_HOST }}
-          EC2_IP: ${{ env.EC2_IP }}
-          ECR_REPO: ${{ env.ECR_REPO }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
