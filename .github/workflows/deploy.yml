@@ -81,7 +81,8 @@ jobs:
           TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
 
         run: |
-          terraform apply -auto-approve
+          # terraform apply -auto-approve
+          terraform apply -replace="aws_instance.flask_ec2" -auto-approve
 
 
       - name: Save Terraform Outputs
