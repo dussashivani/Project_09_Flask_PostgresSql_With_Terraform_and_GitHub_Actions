@@ -391,4 +391,4 @@ jobs:
 - Add health checks post-deployment (e.g., curl the Flask app endpoint).
 - Implement blue-green deployments for zero downtime.
 - Use AWS Auto Scaling for high availability.
-- Monitor with CloudWatch and integrate alerts.
+- Monitor with CloudWatch and integrate alerts..
