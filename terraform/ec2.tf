@@ -42,16 +42,18 @@ resource "aws_instance" "flask_ec2" {
   user_data = <<-EOF
               #!/bin/bash
               set -xe
-              apt-get update -y
-              apt-get install -y docker.io
+              dnf update -y
+              dnf install -y docker
               systemctl start docker
               systemctl enable docker
 
               curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              apt-get install unzip -y
+              dnf install -y unzip
               unzip awscliv2.zip
-              sudo ./aws/install
-			  
+              ./aws/install
+
+              dnf install -y postgresql
+
 			  # Create init.sql file
               cat <<EOT > /tmp/init.sql
               CREATE TABLE IF NOT EXISTS greetings (
