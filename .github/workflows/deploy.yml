@@ -82,7 +82,7 @@ jobs:
 
         run: |
           terraform apply -auto-approve
-          # terraform apply -replace="aws_instance.flask_ec2" -auto-approve
+          
 
 
       - name: Save Terraform Outputs
