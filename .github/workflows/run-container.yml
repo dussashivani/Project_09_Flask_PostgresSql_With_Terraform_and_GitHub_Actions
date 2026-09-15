@@ -77,10 +77,15 @@ jobs:
 
         run: |
 
+          # ssh \
+          #   -o StrictHostKeyChecking=no \
+          #   -i fbkey.pem \
+          #   ubuntu@${EC2_IP} << EOF
+
           ssh \
-            -o StrictHostKeyChecking=no \
-            -i fbkey.pem \
-            ubuntu@${EC2_IP} << EOF
+          -o StrictHostKeyChecking=no \
+          -i fbkey.pem \
+          ec2-user@${EC2_IP} << EOF
 
             set -e
 
