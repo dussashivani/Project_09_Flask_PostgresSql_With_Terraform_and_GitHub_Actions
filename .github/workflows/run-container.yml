@@ -88,11 +88,16 @@ jobs:
           ec2-user@${EC2_IP} << EOF
 
             set -e
+            
+            echo "Installing Docker if needed..."
+
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo dnf install -y docker
+            fi
 
             echo "Starting Docker..."
 
             sudo systemctl enable docker
-
             sudo systemctl start docker
 
             echo "Checking AWS CLI..."
